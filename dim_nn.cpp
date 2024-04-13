@@ -12,7 +12,7 @@
 //
 // Q: Will it ever be good for anything else?
 // A: Probably not. If I ever learn enough about them I would like to implement a convolutional layer.
-
+//
 #include <vector>
 #include <array>
 #include <numeric>
