@@ -313,6 +313,9 @@ int main(int argc, char* argv[])
         // Print the predicted probabilities
         printf("Input: %.1f, %.1f, %.1f, %.1f, %.1f\n", iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width, iris.species);
         printf("Predicted probabilities: ");
+
+        // Remember, the output uses one hot encoding (so 3 element array where the position of the value corresponds to species:
+        //   (position 0 == species 1.0, position 1 == species 2.0, position 2 == species 3.0))
         for (const auto& prob : outputLayer)
         {
             printf("%.4f ", prob);
@@ -322,7 +325,7 @@ int main(int argc, char* argv[])
 
 #if 0
     // Learn the XOR function
-    
+
     // Train a neural network to learn the XOR function
     neural_network<float> nn(0.01f);
 

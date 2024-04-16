@@ -4,9 +4,9 @@
 
 #include <vector>
 
-// 1.0 == 1.0
-// 2.0 == 2.0
-// 3.0 == 3.0
+// 1.0 == setosa
+// 2.0 == versicolor
+// 3.0 == virginica
 
 struct iris
 {
