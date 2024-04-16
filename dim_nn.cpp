@@ -135,17 +135,20 @@ public:
         for (auto& w : weights)
         {
             w.resize(inputs_per_neuron + 1); // +1 for bias
-            initialize_weights(w);
+            initialize_weights(w, inputs_per_neuron, num_neurons);
         }
     }
 
     // Weight initialization
-    void initialize_weights(std::vector<T>& w)
+    void initialize_weights(std::vector<T>& w, size_t input_size, size_t output_size)
     {
-        constexpr T weightRandRange = T(WEIGHT_RANDOM_RANGE);
-        // Loop over all weights, including the bias
+        T range = std::sqrt(6.0 / (input_size + output_size));
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<T> dist(-range, range);
+
         for (size_t i = 0; i < w.size(); ++i)
-            w[i] = (T(rand()) / RAND_MAX * 2 - 1) * weightRandRange;
+            w[i] = dist(gen);
     }
 
     virtual void forward(const std::vector<T>& inputs) = 0;
@@ -268,7 +271,7 @@ int main(int argc, char* argv[])
     nn.add_layer(std::dynamic_pointer_cast<layer<float>>(outputLayer));
 
     // Train the network
-    int numEpochs = 10000;
+    int numEpochs = 100000;
     for (int epoch = 0; epoch < numEpochs; ++epoch)
     {
         float totalLoss = 0.0f;
@@ -300,6 +303,8 @@ int main(int argc, char* argv[])
             printf("Epoch: %d, Loss: %.4f\n", epoch + 1, avgLoss);
         }
     }
+
+    shuffle(begin(irises), end(irises), default_random_engine {});
 
     // Test the trained network
     for (const auto& iris : irises)
