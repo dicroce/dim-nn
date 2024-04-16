@@ -18,6 +18,7 @@
 #include <numeric>
 #include <iostream>
 #include <functional>
+#include <random>
 #include <fstream>
 #include <algorithm>
 #include <iterator>
@@ -177,7 +178,7 @@ public:
 
     T compute_loss(const std::vector<T>& outputs, const std::vector<T>& targets)
     {
-        return loss_functions<T>::mse.compute_loss(outputs, targets);
+        return m_lossFunction.compute_loss(outputs, targets);
     }
 
     void backpropagate(const std::vector<T>& inputs, const std::vector<T>& targets)
@@ -185,7 +186,7 @@ public:
         // Calculate errors for output layer
         auto output_layer = layers.back();
         std::transform(targets.begin(), targets.end(), output_layer->neurons.begin(), output_layer->errors.begin(), std::minus<T>());
-        
+
         // Calculate errors for hidden layers
         for (long i = layers.size() - 2; i >= 0; --i)
         {
@@ -221,26 +222,27 @@ int main(int argc, char* argv[])
     // Train a neural network to learn the XOR function
     neural_network<float> nn(0.01f);
 
-    auto firstLayer = std::make_shared<dense_layer<float>>(4, 2, activation_functions<float>::relu);
+    auto hiddenLayer1 = std::make_shared<dense_layer<float>>(4, 2, activation_functions<float>::relu);
+    auto hiddenLayer2 = std::make_shared<dense_layer<float>>(4, 4, activation_functions<float>::relu);
     auto outputLayer = std::make_shared<dense_layer<float>>(1, 4, activation_functions<float>::relu);
 
-    // Add layers to the network
-    nn.add_layer(std::dynamic_pointer_cast<layer<float>>(firstLayer));
+    nn.add_layer(std::dynamic_pointer_cast<layer<float>>(hiddenLayer1));
+    nn.add_layer(std::dynamic_pointer_cast<layer<float>>(hiddenLayer2));
     nn.add_layer(std::dynamic_pointer_cast<layer<float>>(outputLayer));
 
-    for(int i = 0; i < 10000; ++i)
+    for(int i = 0; i < 500000; ++i)
     {
-       vector<float> inputs = { ((rand()%2)==0)?0.0f:1.0f, ((rand()%2)==0)?0.0f:1.0f };
+        vector<float> inputs = {(float)(rand() % 2), (float)(rand() % 2)};
+        vector<float> expected = {(float)(inputs[0] != inputs[1])};
 
-       vector<float> expected = { (float)((int)inputs[0] ^ (int)inputs[1]) };
+        auto output_layer = nn.forward(inputs);
+        auto loss = nn.compute_loss(output_layer, expected);
 
-       auto output_layer = nn.forward(inputs);
+        printf("Expected Output: %f Actual Output: %f Loss %f\n", expected[0], output_layer[0] > 0.5f ? 1.0f : 0.0f, loss);
+//        if (i % 1000 == 0)
+//            printf("Iteration: %d, Loss: %f\n", i, loss);
 
-       auto loss = nn.compute_loss(output_layer, expected);
-
-       printf("Expected Output: %f Actual Output: %f Loss %f\n", expected[0], output_layer[0], loss);
-
-       nn.backpropagate(inputs, expected);
+        nn.backpropagate(inputs, expected);
     }
 
     return 0;
