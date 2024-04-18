@@ -55,6 +55,18 @@ struct activation_functions
         }
     };
 
+    inline static const activation_function<T> leaky_relu = {
+        [](std::vector<T>& x) {
+            for (auto& val : x)
+                val = (val > T(0)) ? val : T(0.01) * val;
+        },
+        [](const std::vector<T>& x, std::vector<T>& dx) {
+            dx.resize(x.size());
+            for (size_t i = 0; i < x.size(); ++i)
+                dx[i] = (x[i] > T(0)) ? T(1) : T(0.01);
+        }
+    };
+
     inline static const activation_function<T> softmax = {
         [](std::vector<T>& x) {
             T max_val = *std::max_element(x.begin(), x.end());
@@ -156,6 +168,81 @@ public:
 };
 
 template<typename T>
+class optimizer {
+public:
+    virtual void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) = 0;
+};
+
+template<typename T>
+class sgd_optimizer : public optimizer<T> {
+public:
+    void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
+        std::vector<T> prev_layer_output;
+        for (auto& layer : layers) {
+            layer->backward(prev_layer_output, learning_rate);
+            prev_layer_output = layer->neurons;
+        }
+    }
+};
+template<typename T>
+class adam_optimizer : public optimizer<T> {
+public:
+    adam_optimizer(T beta1 = 0.9, T beta2 = 0.999, T epsilon = 1e-8)
+        : m_beta1(beta1), m_beta2(beta2), m_epsilon(epsilon), m_t(0) 
+    {
+        // Initialize m and v here
+    }
+
+    void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
+        ++m_t;
+
+        std::vector<T> prev_layer_output = layers.front()->neurons;
+        for (auto& layer : layers) {
+            if (m_m.find(layer) == m_m.end()) {
+                m_m[layer].resize(layer->weights.size());
+                m_v[layer].resize(layer->weights.size());
+                for (size_t i = 0; i < layer->weights.size(); ++i) {
+                    m_m[layer][i].resize(layer->weights[i].size(), 0);
+                    m_v[layer][i].resize(layer->weights[i].size(), 0);
+                }
+            }
+
+            for (size_t i = 0; i < layer->weights.size(); ++i) {
+                auto& w = layer->weights[i];
+                auto& m = m_m[layer][i];
+                auto& v = m_v[layer][i];
+
+                // Update weights
+                for (size_t j = 0; j < prev_layer_output.size(); ++j) {
+                    T g = layer->errors[i] * prev_layer_output[j];
+                    // ... (rest of the weight update code) ...
+                }
+
+                // Update bias weight
+                T bias_g = layer->errors[i];
+                size_t bias_idx = w.size() - 1;
+                m[bias_idx] = m_beta1 * m[bias_idx] + (1 - m_beta1) * bias_g;
+                v[bias_idx] = m_beta2 * v[bias_idx] + (1 - m_beta2) * bias_g * bias_g;
+                T m_hat = m[bias_idx] / (1 - std::pow(m_beta1, m_t));
+                T v_hat = v[bias_idx] / (1 - std::pow(m_beta2, m_t)); 
+                w[bias_idx] -= learning_rate * m_hat / (std::sqrt(v_hat) + m_epsilon);
+            }
+
+            layer->backward(prev_layer_output, learning_rate);
+            prev_layer_output = layer->neurons;
+        }
+    }
+
+private:
+    T m_beta1; 
+    T m_beta2;
+    T m_epsilon;
+    size_t m_t;
+    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> m_m;
+    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> m_v;
+};
+
+template<typename T>
 class dense_layer : public layer<T> {
 public:
     dense_layer(size_t num_neurons, size_t inputs_per_neuron, activation_function<T> activation = activation_functions<T>::relu) :
@@ -192,9 +279,10 @@ public:
 template<typename T = float>
 class neural_network {
 public:
-    neural_network(T learningRate = 0.01f, loss_function<T> lossFunction = loss_functions<T>::mse) :
-        m_learningRate(learningRate),
-        m_lossFunction(lossFunction)
+    neural_network(float learning_rate, loss_function<T> loss_function = loss_functions<T>::mse, std::unique_ptr<optimizer<T>> optimizer = std::make_unique<sgd_optimizer<T>>()) :
+        m_learning_rate(learning_rate),
+        m_loss_function(loss_function),
+        m_optimizer(std::move(optimizer))
     {
     }
 
@@ -213,7 +301,7 @@ public:
 
     T compute_loss(const std::vector<T>& outputs, const std::vector<T>& targets)
     {
-        return m_lossFunction.compute_loss(outputs, targets);
+        return m_loss_function.compute_loss(outputs, targets);
     }
 
     void backpropagate(const std::vector<T>& inputs, const std::vector<T>& targets)
@@ -223,46 +311,41 @@ public:
         std::transform(targets.begin(), targets.end(), output_layer->neurons.begin(), output_layer->errors.begin(), std::minus<T>());
 
         // Calculate errors for hidden layers
-        for (long i = layers.size() - 2; i >= 0; --i)
-        {
+        for (long i = layers.size() - 2; i >= 0; --i) {
             auto layer = layers[i];
             auto next_layer = layers[i + 1];
 
             std::vector<T> derivatives(layer->neurons.size());
             layer->activation_func.derivative(layer->unactivated_neurons, derivatives);
 
-            for (size_t j = 0; j < layer->neurons.size(); ++j)
-            {
+            for (size_t j = 0; j < layer->neurons.size(); ++j) {
                 layer->errors[j] = 0;
-                for (size_t k = 0; k < next_layer->neurons.size(); ++k)
+                for (size_t k = 0; k < next_layer->neurons.size(); ++k) {
                     layer->errors[j] += next_layer->errors[k] * next_layer->weights[k][j];
+                }
                 layer->errors[j] *= derivatives[j];
             }
         }
 
-        // Update weights
-        std::vector<T> prev_layer_output = inputs;
-        for (auto& layer : layers)
-        {
-            layer->backward(prev_layer_output, m_learningRate);
-            prev_layer_output = layer->neurons;
-        }
+        // Update weights using the optimizer
+        m_optimizer->update_weights(layers, m_learning_rate);
     }
 
 private:
+    float m_learning_rate;
     std::vector<std::shared_ptr<layer<T>>> layers;
-    T m_learningRate;
-    loss_function<T> m_lossFunction;
+    loss_function<T> m_loss_function;
+    std::unique_ptr<optimizer<T>> m_optimizer;
 };
 
 int main(int argc, char* argv[])
 {
     // Create a neural network
-    neural_network<float> nn(0.01f);
+    neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<adam_optimizer<float>>());
 
     // Define the network architecture
-    auto hiddenLayer1 = std::make_shared<dense_layer<float>>(10, 4, activation_functions<float>::relu);
-    auto hiddenLayer2 = std::make_shared<dense_layer<float>>(10, 10, activation_functions<float>::relu);
+    auto hiddenLayer1 = std::make_shared<dense_layer<float>>(10, 4, activation_functions<float>::leaky_relu);
+    auto hiddenLayer2 = std::make_shared<dense_layer<float>>(10, 10, activation_functions<float>::leaky_relu);
     auto outputLayer = std::make_shared<dense_layer<float>>(3, 10, activation_functions<float>::softmax);
 
     // Add layers to the network
@@ -271,7 +354,7 @@ int main(int argc, char* argv[])
     nn.add_layer(std::dynamic_pointer_cast<layer<float>>(outputLayer));
 
     // Train the network
-    int numEpochs = 100000;
+    int numEpochs = 35000;
     for (int epoch = 0; epoch < numEpochs; ++epoch)
     {
         float totalLoss = 0.0f;
