@@ -130,21 +130,21 @@ struct loss_functions {
 template<typename T>
 class layer {
 public:
-    std::vector<T> neurons;
-    std::vector<T> unactivated_neurons;
-    std::vector<T> errors;
-    std::vector<std::vector<T>> weights;
-    activation_function<T> activation_func;
+    std::vector<T> _neurons;
+    std::vector<T> _unactivated_neurons;
+    std::vector<T> _errors;
+    std::vector<std::vector<T>> _weights;
+    activation_function<T> _activation_func;
 
     layer(size_t num_neurons, size_t inputs_per_neuron, activation_function<T> activation = activation_functions<T>::relu) :
-        activation_func(activation)
+        _activation_func(activation)
     {
-        neurons.resize(num_neurons);
-        unactivated_neurons.resize(num_neurons);
-        errors.resize(num_neurons);
-        weights.resize(num_neurons);
+        _neurons.resize(num_neurons);
+        _unactivated_neurons.resize(num_neurons);
+        _errors.resize(num_neurons);
+        _weights.resize(num_neurons);
 
-        for (auto& w : weights)
+        for (auto& w : _weights)
         {
             w.resize(inputs_per_neuron + 1); // +1 for bias
             initialize_weights(w, inputs_per_neuron, num_neurons);
@@ -180,7 +180,7 @@ public:
         std::vector<T> prev_layer_output;
         for (auto& layer : layers) {
             layer->backward(prev_layer_output, learning_rate);
-            prev_layer_output = layer->neurons;
+            prev_layer_output = layer->_neurons;
         }
     }
 };
@@ -188,58 +188,58 @@ template<typename T>
 class adam_optimizer : public optimizer<T> {
 public:
     adam_optimizer(T beta1 = 0.9, T beta2 = 0.999, T epsilon = 1e-8)
-        : m_beta1(beta1), m_beta2(beta2), m_epsilon(epsilon), m_t(0) 
+        : _beta1(beta1), _beta2(beta2), _epsilon(epsilon), _t(0) 
     {
         // Initialize m and v here
     }
 
     void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
-        ++m_t;
+        ++_t;
 
-        std::vector<T> prev_layer_output = layers.front()->neurons;
+        std::vector<T> prev_layer_output = layers.front()->_neurons;
         for (auto& layer : layers) {
-            if (m_m.find(layer) == m_m.end()) {
-                m_m[layer].resize(layer->weights.size());
-                m_v[layer].resize(layer->weights.size());
-                for (size_t i = 0; i < layer->weights.size(); ++i) {
-                    m_m[layer][i].resize(layer->weights[i].size(), 0);
-                    m_v[layer][i].resize(layer->weights[i].size(), 0);
+            if (_m.find(layer) == _m.end()) {
+                _m[layer].resize(layer->_weights.size());
+                _v[layer].resize(layer->_weights.size());
+                for (size_t i = 0; i < layer->_weights.size(); ++i) {
+                    _m[layer][i].resize(layer->_weights[i].size(), 0);
+                    _v[layer][i].resize(layer->_weights[i].size(), 0);
                 }
             }
 
-            for (size_t i = 0; i < layer->weights.size(); ++i) {
-                auto& w = layer->weights[i];
-                auto& m = m_m[layer][i];
-                auto& v = m_v[layer][i];
+            for (size_t i = 0; i < layer->_weights.size(); ++i) {
+                auto& w = layer->_weights[i];
+                auto& m = _m[layer][i];
+                auto& v = _v[layer][i];
 
                 // Update weights
                 for (size_t j = 0; j < prev_layer_output.size(); ++j) {
-                    T g = layer->errors[i] * prev_layer_output[j];
+                    T g = layer->_errors[i] * prev_layer_output[j];
                     // ... (rest of the weight update code) ...
                 }
 
                 // Update bias weight
-                T bias_g = layer->errors[i];
+                T bias_g = layer->_errors[i];
                 size_t bias_idx = w.size() - 1;
-                m[bias_idx] = m_beta1 * m[bias_idx] + (1 - m_beta1) * bias_g;
-                v[bias_idx] = m_beta2 * v[bias_idx] + (1 - m_beta2) * bias_g * bias_g;
-                T m_hat = m[bias_idx] / (1 - std::pow(m_beta1, m_t));
-                T v_hat = v[bias_idx] / (1 - std::pow(m_beta2, m_t)); 
-                w[bias_idx] -= learning_rate * m_hat / (std::sqrt(v_hat) + m_epsilon);
+                m[bias_idx] = _beta1 * m[bias_idx] + (1 - _beta1) * bias_g;
+                v[bias_idx] = _beta2 * v[bias_idx] + (1 - _beta2) * bias_g * bias_g;
+                T m_hat = m[bias_idx] / (1 - std::pow(_beta1, _t));
+                T v_hat = v[bias_idx] / (1 - std::pow(_beta2, _t)); 
+                w[bias_idx] -= learning_rate * m_hat / (std::sqrt(v_hat) + _epsilon);
             }
 
             layer->backward(prev_layer_output, learning_rate);
-            prev_layer_output = layer->neurons;
+            prev_layer_output = layer->_neurons;
         }
     }
 
 private:
-    T m_beta1; 
-    T m_beta2;
-    T m_epsilon;
-    size_t m_t;
-    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> m_m;
-    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> m_v;
+    T _beta1; 
+    T _beta2;
+    T _epsilon;
+    size_t _t;
+    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> _m;
+    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> _v;
 };
 
 template<typename T>
@@ -253,22 +253,22 @@ public:
     // Forward propagation for this layer
     void forward(const std::vector<T>& inputs)
     {
-        for (size_t i = 0; i < this->neurons.size(); ++i)
-            this->unactivated_neurons[i] = std::inner_product(inputs.begin(), inputs.end(), this->weights[i].begin(), this->weights[i].back());
-        this->activation_func.activation(this->unactivated_neurons);
-        this->neurons = this->unactivated_neurons;
+        for (size_t i = 0; i < this->_neurons.size(); ++i)
+            this->_unactivated_neurons[i] = std::inner_product(inputs.begin(), inputs.end(), this->_weights[i].begin(), this->_weights[i].back());
+        this->_activation_func.activation(this->_unactivated_neurons);
+        this->_neurons = this->_unactivated_neurons;
     }
 
     // Backward propagation for this layer
     void backward(const std::vector<T>& prev_layer_neurons, T learningRate)
     {
-        std::vector<T> derivatives(this->neurons.size());
-        this->activation_func.derivative(this->unactivated_neurons, derivatives);
-        for (size_t i = 0; i < this->neurons.size(); ++i)
+        std::vector<T> derivatives(this->_neurons.size());
+        this->_activation_func.derivative(this->_unactivated_neurons, derivatives);
+        for (size_t i = 0; i < this->_neurons.size(); ++i)
         {
             for (size_t j = 0; j < prev_layer_neurons.size(); ++j)
-                this->weights[i][j] += learningRate * this->errors[i] * derivatives[i] * prev_layer_neurons[j];
-            this->weights[i].back() += learningRate * this->errors[i] * derivatives[i];
+                this->_weights[i][j] += learningRate * this->_errors[i] * derivatives[i] * prev_layer_neurons[j];
+            this->_weights[i].back() += learningRate * this->_errors[i] * derivatives[i];
         }
     }
 
@@ -280,62 +280,62 @@ template<typename T = float>
 class neural_network {
 public:
     neural_network(float learning_rate, loss_function<T> loss_function = loss_functions<T>::mse, std::unique_ptr<optimizer<T>> optimizer = std::make_unique<sgd_optimizer<T>>()) :
-        m_learning_rate(learning_rate),
-        m_loss_function(loss_function),
-        m_optimizer(std::move(optimizer))
+        _learning_rate(learning_rate),
+        _loss_function(loss_function),
+        _optimizer(std::move(optimizer))
     {
     }
 
-    void add_layer(std::shared_ptr<layer<T>> layer) {layers.push_back(layer);}
+    void add_layer(std::shared_ptr<layer<T>> layer) {_layers.push_back(layer);}
 
     std::vector<T> forward(const std::vector<T>& inputs)
     {
         std::vector<T> layer_input = inputs;
-        for (auto& layer : layers)
+        for (auto& layer : _layers)
         {
             layer->forward(layer_input);
-            layer_input = layer->neurons; // Output of current layer is input to next
+            layer_input = layer->_neurons; // Output of current layer is input to next
         }
         return layer_input; // Output of last layer
     }
 
     T compute_loss(const std::vector<T>& outputs, const std::vector<T>& targets)
     {
-        return m_loss_function.compute_loss(outputs, targets);
+        return _loss_function.compute_loss(outputs, targets);
     }
 
     void backpropagate(const std::vector<T>& inputs, const std::vector<T>& targets)
     {
         // Calculate errors for output layer
-        auto output_layer = layers.back();
-        std::transform(targets.begin(), targets.end(), output_layer->neurons.begin(), output_layer->errors.begin(), std::minus<T>());
+        auto output_layer = _layers.back();
+        std::transform(targets.begin(), targets.end(), output_layer->_neurons.begin(), output_layer->_errors.begin(), std::minus<T>());
 
-        // Calculate errors for hidden layers
-        for (long i = layers.size() - 2; i >= 0; --i) {
-            auto layer = layers[i];
-            auto next_layer = layers[i + 1];
+        // Calculate errors for hidden _layers
+        for (long i = _layers.size() - 2; i >= 0; --i) {
+            auto layer = _layers[i];
+            auto next_layer = _layers[i + 1];
 
-            std::vector<T> derivatives(layer->neurons.size());
-            layer->activation_func.derivative(layer->unactivated_neurons, derivatives);
+            std::vector<T> derivatives(layer->_neurons.size());
+            layer->_activation_func.derivative(layer->_unactivated_neurons, derivatives);
 
-            for (size_t j = 0; j < layer->neurons.size(); ++j) {
-                layer->errors[j] = 0;
-                for (size_t k = 0; k < next_layer->neurons.size(); ++k) {
-                    layer->errors[j] += next_layer->errors[k] * next_layer->weights[k][j];
+            for (size_t j = 0; j < layer->_neurons.size(); ++j) {
+                layer->_errors[j] = 0;
+                for (size_t k = 0; k < next_layer->_neurons.size(); ++k) {
+                    layer->_errors[j] += next_layer->_errors[k] * next_layer->_weights[k][j];
                 }
-                layer->errors[j] *= derivatives[j];
+                layer->_errors[j] *= derivatives[j];
             }
         }
 
         // Update weights using the optimizer
-        m_optimizer->update_weights(layers, m_learning_rate);
+        _optimizer->update_weights(_layers, _learning_rate);
     }
 
 private:
-    float m_learning_rate;
-    std::vector<std::shared_ptr<layer<T>>> layers;
-    loss_function<T> m_loss_function;
-    std::unique_ptr<optimizer<T>> m_optimizer;
+    float _learning_rate;
+    std::vector<std::shared_ptr<layer<T>>> _layers;
+    loss_function<T> _loss_function;
+    std::unique_ptr<optimizer<T>> _optimizer;
 };
 
 int main(int argc, char* argv[])
