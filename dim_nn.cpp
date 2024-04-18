@@ -190,7 +190,6 @@ public:
     adam_optimizer(T beta1 = 0.9, T beta2 = 0.999, T epsilon = 1e-8)
         : _beta1(beta1), _beta2(beta2), _epsilon(epsilon), _t(0) 
     {
-        // Initialize m and v here
     }
 
     void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
