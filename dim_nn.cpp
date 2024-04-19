@@ -12,6 +12,12 @@
 //
 // Q: Will it ever be good for anything else?
 // A: Probably not. If I ever learn enough about them I would like to implement a convolutional layer.
+//
+// Q: What is implemented?
+// A: relu, leaky-relu, softmax, dense networks, adam & regular gradient descent.
+//
+// Q: Is it fast?
+// A: No. But it does use std::inner_product() which is something I always wanted to do since I found out it existed.
 
 #include <vector>
 #include <array>
@@ -28,8 +34,6 @@
 #include <cstring>
 #include <cstdlib>
 #include "iris.h"
-
-#define WEIGHT_RANDOM_RANGE .1
 
 using namespace std;
 
@@ -339,6 +343,7 @@ private:
 
 int main(int argc, char* argv[])
 {
+#if 1
     // Create a neural network
     neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<adam_optimizer<float>>());
 
@@ -410,11 +415,11 @@ int main(int argc, char* argv[])
         printf("\n");
     }
 
-#if 0
+#else
     // Learn the XOR function
 
     // Train a neural network to learn the XOR function
-    neural_network<float> nn(0.01f);
+    neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<sgd_optimizer<float>>());
 
     auto hiddenLayer1 = std::make_shared<dense_layer<float>>(4, 2, activation_functions<float>::relu);
     auto hiddenLayer2 = std::make_shared<dense_layer<float>>(4, 4, activation_functions<float>::relu);
