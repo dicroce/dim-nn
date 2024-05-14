@@ -192,14 +192,13 @@ template<typename T>
 class adam_optimizer : public optimizer<T> {
 public:
     adam_optimizer(T beta1 = 0.9, T beta2 = 0.999, T epsilon = 1e-8)
-        : _beta1(beta1), _beta2(beta2), _epsilon(epsilon), _t(0) 
+        : _beta1(beta1), _beta2(beta2), _epsilon(epsilon), _t(0)
     {
     }
 
     void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
         ++_t;
 
-        std::vector<T> prev_layer_output = layers.front()->_neurons;
         for (auto& layer : layers) {
             if (_m.find(layer) == _m.end()) {
                 _m[layer].resize(layer->_weights.size());
@@ -216,28 +215,21 @@ public:
                 auto& v = _v[layer][i];
 
                 // Update weights
-                for (size_t j = 0; j < prev_layer_output.size(); ++j) {
-                    T g = layer->_errors[i] * prev_layer_output[j];
-                    // ... (rest of the weight update code) ...
+                for (size_t j = 0; j < w.size(); ++j) {
+                    T g = (j == w.size() - 1) ? layer->_errors[i] : layer->_errors[i] * layers[layers.size() - 2]->_neurons[j];
+                    m[j] = _beta1 * m[j] + (1 - _beta1) * g;
+                    v[j] = _beta2 * v[j] + (1 - _beta2) * g * g;
+
+                    T m_hat = m[j] / (1 - std::pow(_beta1, _t));
+                    T v_hat = v[j] / (1 - std::pow(_beta2, _t));
+                    w[j] -= learning_rate * m_hat / (std::sqrt(v_hat) + _epsilon);
                 }
-
-                // Update bias weight
-                T bias_g = layer->_errors[i];
-                size_t bias_idx = w.size() - 1;
-                m[bias_idx] = _beta1 * m[bias_idx] + (1 - _beta1) * bias_g;
-                v[bias_idx] = _beta2 * v[bias_idx] + (1 - _beta2) * bias_g * bias_g;
-                T m_hat = m[bias_idx] / (1 - std::pow(_beta1, _t));
-                T v_hat = v[bias_idx] / (1 - std::pow(_beta2, _t)); 
-                w[bias_idx] -= learning_rate * m_hat / (std::sqrt(v_hat) + _epsilon);
             }
-
-            layer->backward(prev_layer_output, learning_rate);
-            prev_layer_output = layer->_neurons;
         }
     }
 
 private:
-    T _beta1; 
+    T _beta1;
     T _beta2;
     T _epsilon;
     size_t _t;
