@@ -253,30 +253,50 @@ public:
     {
     }
 
-    // Forward propagation for this layer
-    void forward(const std::vector<T>& inputs)
+    void forward(const std::vector<T>& inputs) override
     {
-        for (size_t i = 0; i < this->_neurons.size(); ++i)
-            this->_unactivated_neurons[i] = std::inner_product(inputs.begin(), inputs.end(), this->_weights[i].begin(), this->_weights[i].back());
+        for (size_t i = 0; i < this->_neurons.size(); ++i) {
+            // Compute the dot product of weights and inputs
+            this->_unactivated_neurons[i] = std::inner_product(inputs.begin(), inputs.end(), this->_weights[i].begin(), T(0));
+            // Add the bias term
+            this->_unactivated_neurons[i] += this->_weights[i].back();
+        }
         this->_activation_func.activation(this->_unactivated_neurons);
         this->_neurons = this->_unactivated_neurons;
     }
 
-    // Backward propagation for this layer
-    void backward(const std::vector<T>& prev_layer_neurons, T learningRate)
+    void backward(const std::vector<T>& prev_layer_neurons, T learningRate) override
     {
         std::vector<T> derivatives(this->_neurons.size());
         this->_activation_func.derivative(this->_unactivated_neurons, derivatives);
+
         for (size_t i = 0; i < this->_neurons.size(); ++i)
         {
             for (size_t j = 0; j < prev_layer_neurons.size(); ++j)
-                this->_weights[i][j] += learningRate * this->_errors[i] * derivatives[i] * prev_layer_neurons[j];
-            this->_weights[i].back() += learningRate * this->_errors[i] * derivatives[i];
+                this->_weights[i][j] -= learningRate * this->_errors[i] * derivatives[i] * prev_layer_neurons[j];
+            this->_weights[i].back() -= learningRate * this->_errors[i] * derivatives[i]; // Update bias
         }
     }
 
-    // Error calculation needs to be performed in the neural network class
-    // as it requires information about the next layer or the target values.
+    void calculate_errors(const std::vector<T>& target_or_next_layer_errors, const std::vector<std::vector<T>>& next_layer_weights, bool is_output_layer)
+    {
+        if (is_output_layer)
+        {
+            for (size_t i = 0; i < this->_neurons.size(); ++i)
+                this->_errors[i] = this->_neurons[i] - target_or_next_layer_errors[i];
+        }
+        else
+        {
+            std::vector<T> next_errors(target_or_next_layer_errors.size());
+            for (size_t i = 0; i < this->_neurons.size(); ++i)
+            {
+                this->_errors[i] = 0;
+                for (size_t j = 0; j < target_or_next_layer_errors.size(); ++j)
+                    this->_errors[i] += target_or_next_layer_errors[j] * next_layer_weights[j][i];
+                this->_errors[i] *= this->_unactivated_neurons[i] > T(0) ? T(1) : T(0.01); // Adjust for leaky ReLU derivative
+            }
+        }
+    }
 };
 
 template<typename T = float>
@@ -310,24 +330,16 @@ public:
     void backpropagate(const std::vector<T>& inputs, const std::vector<T>& targets)
     {
         // Calculate errors for output layer
-        auto output_layer = _layers.back();
-        std::transform(targets.begin(), targets.end(), output_layer->_neurons.begin(), output_layer->_errors.begin(), std::minus<T>());
+        auto output_layer = std::dynamic_pointer_cast<dense_layer<T>>(_layers.back());
+        output_layer->calculate_errors(targets, {}, true);
 
-        // Calculate errors for hidden _layers
-        for (long i = _layers.size() - 2; i >= 0; --i) {
-            auto layer = _layers[i];
-            auto next_layer = _layers[i + 1];
+        // Calculate errors for hidden layers
+        for (long i = _layers.size() - 2; i >= 0; --i)
+        {
+            auto layer = std::dynamic_pointer_cast<dense_layer<T>>(_layers[i]);
+            auto next_layer = std::dynamic_pointer_cast<dense_layer<T>>(_layers[i + 1]);
 
-            std::vector<T> derivatives(layer->_neurons.size());
-            layer->_activation_func.derivative(layer->_unactivated_neurons, derivatives);
-
-            for (size_t j = 0; j < layer->_neurons.size(); ++j) {
-                layer->_errors[j] = 0;
-                for (size_t k = 0; k < next_layer->_neurons.size(); ++k) {
-                    layer->_errors[j] += next_layer->_errors[k] * next_layer->_weights[k][j];
-                }
-                layer->_errors[j] *= derivatives[j];
-            }
+            layer->calculate_errors(next_layer->_errors, next_layer->_weights, false);
         }
 
         // Update weights using the optimizer
@@ -419,7 +431,7 @@ int main(int argc, char* argv[])
     // Learn the XOR function
 
     // Train a neural network to learn the XOR function
-    neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<sgd_optimizer<float>>());
+    neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<adam_optimizer<float>>());
 
     auto hiddenLayer1 = std::make_shared<dense_layer<float>>(4, 2, activation_functions<float>::relu);
     auto hiddenLayer2 = std::make_shared<dense_layer<float>>(4, 4, activation_functions<float>::relu);
