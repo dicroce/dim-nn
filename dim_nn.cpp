@@ -1,4 +1,3 @@
-
 // dim-nn
 //
 // Q: Why is it dim?
@@ -33,6 +32,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <unordered_map>
 #include "iris.h"
 
 using namespace std;
@@ -86,14 +86,7 @@ struct activation_functions
         },
         [](const std::vector<T>& y, std::vector<T>& dy) {
             dy.resize(y.size());
-            for (size_t i = 0; i < y.size(); ++i) {
-                dy[i] = y[i] * (1 - y[i]);
-                for (size_t j = 0; j < y.size(); ++j) {
-                    if (i != j) {
-                        dy[i] -= y[i] * y[j];
-                    }
-                }
-            }
+            // Note: For cross-entropy loss with softmax, derivative simplifies and is handled in loss function
         }
     };
 };
@@ -129,6 +122,28 @@ struct loss_functions {
             return result;
         }
     };
+
+    inline static const loss_function<T> cross_entropy =
+    {
+        // Cross-Entropy Loss
+        [](const std::vector<T>& outputs, const std::vector<T>& targets)
+        {
+            T sum = 0;
+            for (size_t i = 0; i < outputs.size(); ++i)
+            {
+                sum -= targets[i] * std::log(outputs[i] + std::numeric_limits<T>::epsilon());
+            }
+            return sum / outputs.size();
+        },
+        // Derivative of Cross-Entropy Loss
+        [](const std::vector<T>& outputs, const std::vector<T>& targets)
+        {
+            std::vector<T> result(outputs.size());
+            for (size_t i = 0; i < outputs.size(); ++i)
+                result[i] = (outputs[i] - targets[i]) / outputs.size();
+            return result;
+        }
+    };
 };
 
 template<typename T>
@@ -139,6 +154,7 @@ public:
     std::vector<T> _errors;
     std::vector<std::vector<T>> _weights;
     activation_function<T> _activation_func;
+    std::vector<T> _inputs; // Store inputs for use in backward pass
 
     layer(size_t num_neurons, size_t inputs_per_neuron, activation_function<T> activation = activation_functions<T>::relu) :
         _activation_func(activation)
@@ -155,12 +171,11 @@ public:
         }
     }
 
-    // Weight initialization
+    // Weight initialization with fixed seed for reproducibility
     void initialize_weights(std::vector<T>& w, size_t input_size, size_t output_size)
     {
+        static std::mt19937 gen(42); // Fixed seed
         T range = std::sqrt(6.0 / (input_size + output_size));
-        std::random_device rd;
-        std::mt19937 gen(rd());
         std::uniform_real_distribution<T> dist(-range, range);
 
         for (size_t i = 0; i < w.size(); ++i)
@@ -169,6 +184,9 @@ public:
 
     virtual void forward(const std::vector<T>& inputs) = 0;
     virtual void backward(const std::vector<T>& prev_layer_neurons, T learningRate) = 0;
+    virtual void backward(const std::vector<T>& prev_layer_neurons, T learningRate,
+                          std::vector<std::vector<T>>& m, std::vector<std::vector<T>>& v,
+                          size_t t, T beta1, T beta2, T epsilon) = 0;
 };
 
 template<typename T>
@@ -181,13 +199,14 @@ template<typename T>
 class sgd_optimizer : public optimizer<T> {
 public:
     void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
-        std::vector<T> prev_layer_output;
-        for (auto& layer : layers) {
-            layer->backward(prev_layer_output, learning_rate);
-            prev_layer_output = layer->_neurons;
+        for (size_t idx = 0; idx < layers.size(); ++idx) {
+            auto& layer = layers[idx];
+            auto prev_layer = idx > 0 ? layers[idx - 1] : nullptr;
+            layer->backward(prev_layer ? prev_layer->_neurons : std::vector<T>(), learning_rate);
         }
     }
 };
+
 template<typename T>
 class adam_optimizer : public optimizer<T> {
 public:
@@ -199,32 +218,21 @@ public:
     void update_weights(std::vector<std::shared_ptr<layer<T>>>& layers, T learning_rate) override {
         ++_t;
 
-        for (auto& layer : layers) {
-            if (_m.find(layer) == _m.end()) {
-                _m[layer].resize(layer->_weights.size());
-                _v[layer].resize(layer->_weights.size());
+        for (size_t idx = 0; idx < layers.size(); ++idx) {
+            auto& layer = layers[idx];
+            auto prev_layer = idx > 0 ? layers[idx - 1] : nullptr;
+
+            if (_m.find(layer.get()) == _m.end()) {
+                _m[layer.get()].resize(layer->_weights.size());
+                _v[layer.get()].resize(layer->_weights.size());
                 for (size_t i = 0; i < layer->_weights.size(); ++i) {
-                    _m[layer][i].resize(layer->_weights[i].size(), 0);
-                    _v[layer][i].resize(layer->_weights[i].size(), 0);
+                    _m[layer.get()][i].resize(layer->_weights[i].size(), 0);
+                    _v[layer.get()][i].resize(layer->_weights[i].size(), 0);
                 }
             }
 
-            for (size_t i = 0; i < layer->_weights.size(); ++i) {
-                auto& w = layer->_weights[i];
-                auto& m = _m[layer][i];
-                auto& v = _v[layer][i];
-
-                // Update weights
-                for (size_t j = 0; j < w.size(); ++j) {
-                    T g = (j == w.size() - 1) ? layer->_errors[i] : layer->_errors[i] * layers[layers.size() - 2]->_neurons[j];
-                    m[j] = _beta1 * m[j] + (1 - _beta1) * g;
-                    v[j] = _beta2 * v[j] + (1 - _beta2) * g * g;
-
-                    T m_hat = m[j] / (1 - std::pow(_beta1, _t));
-                    T v_hat = v[j] / (1 - std::pow(_beta2, _t));
-                    w[j] -= learning_rate * m_hat / (std::sqrt(v_hat) + _epsilon);
-                }
-            }
+            layer->backward(prev_layer ? prev_layer->_neurons : std::vector<T>(), learning_rate,
+                            _m[layer.get()], _v[layer.get()], _t, _beta1, _beta2, _epsilon);
         }
     }
 
@@ -233,8 +241,8 @@ private:
     T _beta2;
     T _epsilon;
     size_t _t;
-    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> _m;
-    std::unordered_map<std::shared_ptr<layer<T>>, std::vector<std::vector<T>>> _v;
+    std::unordered_map<layer<T>*, std::vector<std::vector<T>>> _m;
+    std::unordered_map<layer<T>*, std::vector<std::vector<T>>> _v;
 };
 
 template<typename T>
@@ -247,6 +255,7 @@ public:
 
     void forward(const std::vector<T>& inputs) override
     {
+        this->_inputs = inputs; // Store inputs for backward pass
         for (size_t i = 0; i < this->_neurons.size(); ++i) {
             // Compute the dot product of weights and inputs
             this->_unactivated_neurons[i] = std::inner_product(inputs.begin(), inputs.end(), this->_weights[i].begin(), T(0));
@@ -259,14 +268,41 @@ public:
 
     void backward(const std::vector<T>& prev_layer_neurons, T learningRate) override
     {
-        std::vector<T> derivatives(this->_neurons.size());
-        this->_activation_func.derivative(this->_unactivated_neurons, derivatives);
-
         for (size_t i = 0; i < this->_neurons.size(); ++i)
         {
             for (size_t j = 0; j < prev_layer_neurons.size(); ++j)
-                this->_weights[i][j] -= learningRate * this->_errors[i] * derivatives[i] * prev_layer_neurons[j];
-            this->_weights[i].back() -= learningRate * this->_errors[i] * derivatives[i]; // Update bias
+                this->_weights[i][j] -= learningRate * this->_errors[i] * prev_layer_neurons[j];
+            this->_weights[i].back() -= learningRate * this->_errors[i]; // Update bias
+        }
+    }
+
+    void backward(const std::vector<T>& prev_layer_neurons, T learningRate,
+                  std::vector<std::vector<T>>& m, std::vector<std::vector<T>>& v,
+                  size_t t, T beta1, T beta2, T epsilon) override
+    {
+        for (size_t i = 0; i < this->_neurons.size(); ++i)
+        {
+            for (size_t j = 0; j < prev_layer_neurons.size(); ++j)
+            {
+                T g = this->_errors[i] * prev_layer_neurons[j];
+                m[i][j] = beta1 * m[i][j] + (1 - beta1) * g;
+                v[i][j] = beta2 * v[i][j] + (1 - beta2) * g * g;
+
+                T m_hat = m[i][j] / (1 - std::pow(beta1, t));
+                T v_hat = v[i][j] / (1 - std::pow(beta2, t));
+
+                this->_weights[i][j] -= learningRate * m_hat / (std::sqrt(v_hat) + epsilon);
+            }
+
+            // Bias term
+            T g = this->_errors[i];
+            m[i].back() = beta1 * m[i].back() + (1 - beta1) * g;
+            v[i].back() = beta2 * v[i].back() + (1 - beta2) * g * g;
+
+            T m_hat = m[i].back() / (1 - std::pow(beta1, t));
+            T v_hat = v[i].back() / (1 - std::pow(beta2, t));
+
+            this->_weights[i].back() -= learningRate * m_hat / (std::sqrt(v_hat) + epsilon);
         }
     }
 
@@ -274,18 +310,20 @@ public:
     {
         if (is_output_layer)
         {
+            // For cross-entropy loss with softmax activation, the error is outputs - targets
             for (size_t i = 0; i < this->_neurons.size(); ++i)
                 this->_errors[i] = this->_neurons[i] - target_or_next_layer_errors[i];
         }
         else
         {
-            std::vector<T> next_errors(target_or_next_layer_errors.size());
             for (size_t i = 0; i < this->_neurons.size(); ++i)
             {
                 this->_errors[i] = 0;
                 for (size_t j = 0; j < target_or_next_layer_errors.size(); ++j)
                     this->_errors[i] += target_or_next_layer_errors[j] * next_layer_weights[j][i];
-                this->_errors[i] *= this->_unactivated_neurons[i] > T(0) ? T(1) : T(0.01); // Adjust for leaky ReLU derivative
+                // Apply derivative of activation function
+                T derivative = this->_unactivated_neurons[i] > T(0) ? T(1) : T(0.01); // Leaky ReLU derivative
+                this->_errors[i] *= derivative;
             }
         }
     }
@@ -347,9 +385,28 @@ private:
 
 int main(int argc, char* argv[])
 {
-#if 1
+    // Normalize the input data
+    std::vector<float> sepal_lengths, sepal_widths, petal_lengths, petal_widths;
+    for (const auto& iris : irises)
+    {
+        sepal_lengths.push_back(iris.sepal_length);
+        sepal_widths.push_back(iris.sepal_width);
+        petal_lengths.push_back(iris.petal_length);
+        petal_widths.push_back(iris.petal_width);
+    }
+
+    auto min_max = [](const std::vector<float>& data) {
+        auto [min_it, max_it] = std::minmax_element(data.begin(), data.end());
+        return std::make_pair(*min_it, *max_it);
+    };
+
+    auto [sl_min, sl_max] = min_max(sepal_lengths);
+    auto [sw_min, sw_max] = min_max(sepal_widths);
+    auto [pl_min, pl_max] = min_max(petal_lengths);
+    auto [pw_min, pw_max] = min_max(petal_widths);
+
     // Create a neural network
-    neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<adam_optimizer<float>>());
+    neural_network<float> nn(0.01, loss_functions<float>::cross_entropy, std::make_unique<adam_optimizer<float>>());
 
     // Define the network architecture
     auto hiddenLayer1 = std::make_shared<dense_layer<float>>(10, 4, activation_functions<float>::leaky_relu);
@@ -361,15 +418,29 @@ int main(int argc, char* argv[])
     nn.add_layer(std::dynamic_pointer_cast<layer<float>>(hiddenLayer2));
     nn.add_layer(std::dynamic_pointer_cast<layer<float>>(outputLayer));
 
+    // Training parameters
+    int numEpochs = 5000;
+
+    // Fixed random seed for reproducibility
+    std::default_random_engine rng(42);
+
     // Train the network
-    int numEpochs = 35000;
     for (int epoch = 0; epoch < numEpochs; ++epoch)
     {
         float totalLoss = 0.0f;
+
+        // Shuffle the dataset each epoch
+        std::shuffle(irises.begin(), irises.end(), rng);
+
         for (const auto& iris : irises)
         {
-            // Prepare the input features
-            std::vector<float> inputs = {iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width};
+            // Normalize the input features
+            std::vector<float> inputs = {
+                (iris.sepal_length - sl_min) / (sl_max - sl_min),
+                (iris.sepal_width - sw_min) / (sw_max - sw_min),
+                (iris.petal_length - pl_min) / (pl_max - pl_min),
+                (iris.petal_width - pw_min) / (pw_max - pw_min)
+            };
 
             // Prepare the expected output (one-hot encoded)
             std::vector<float> expectedOutput(3, 0.0f);
@@ -377,10 +448,10 @@ int main(int argc, char* argv[])
             expectedOutput[speciesIndex] = 1.0f;
 
             // Forward pass
-            auto outputLayer = nn.forward(inputs);
+            auto outputs = nn.forward(inputs);
 
             // Calculate loss
-            auto loss = nn.compute_loss(outputLayer, expectedOutput);
+            auto loss = nn.compute_loss(outputs, expectedOutput);
             totalLoss += loss;
 
             // Backward pass
@@ -395,57 +466,32 @@ int main(int argc, char* argv[])
         }
     }
 
-    shuffle(begin(irises), end(irises), default_random_engine {});
-
     // Test the trained network
     for (const auto& iris : irises)
     {
-        // Prepare the input features
-        std::vector<float> inputs = {iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width};
+        // Normalize the input features
+        std::vector<float> inputs = {
+            (iris.sepal_length - sl_min) / (sl_max - sl_min),
+            (iris.sepal_width - sw_min) / (sw_max - sw_min),
+            (iris.petal_length - pl_min) / (pl_max - pl_min),
+            (iris.petal_width - pw_min) / (pw_max - pw_min)
+        };
 
         // Forward pass
-        auto outputLayer = nn.forward(inputs);
+        auto outputs = nn.forward(inputs);
 
-        // Print the predicted probabilities
-        printf("Input: %.1f, %.1f, %.1f, %.1f, %.1f\n", iris.sepal_length, iris.sepal_width, iris.petal_length, iris.petal_width, iris.species);
-        printf("Predicted probabilities: ");
+        // Find the predicted class
+        auto max_it = std::max_element(outputs.begin(), outputs.end());
+        int predicted_class = std::distance(outputs.begin(), max_it) + 1;
 
-        // Remember, the output uses one hot encoding (so 3 element array where the position of the value corresponds to species:
-        //   (position 0 == species 1.0, position 1 == species 2.0, position 2 == species 3.0))
-        for (const auto& prob : outputLayer)
+        // Print the results
+        printf("Actual species: %d, Predicted species: %d, Probabilities: ", static_cast<int>(iris.species), predicted_class);
+        for (const auto& prob : outputs)
         {
             printf("%.4f ", prob);
         }
         printf("\n");
     }
 
-#else
-    // Learn the XOR function
-
-    // Train a neural network to learn the XOR function
-    neural_network<float> nn(0.001, loss_functions<float>::mse, std::make_unique<adam_optimizer<float>>());
-
-    auto hiddenLayer1 = std::make_shared<dense_layer<float>>(4, 2, activation_functions<float>::relu);
-    auto hiddenLayer2 = std::make_shared<dense_layer<float>>(4, 4, activation_functions<float>::relu);
-    auto outputLayer = std::make_shared<dense_layer<float>>(1, 4, activation_functions<float>::relu);
-
-    nn.add_layer(std::dynamic_pointer_cast<layer<float>>(hiddenLayer1));
-    nn.add_layer(std::dynamic_pointer_cast<layer<float>>(hiddenLayer2));
-    nn.add_layer(std::dynamic_pointer_cast<layer<float>>(outputLayer));
-
-    for(int i = 0; i < 500000; ++i)
-    {
-        vector<float> inputs = {(float)(rand() % 2), (float)(rand() % 2)};
-        vector<float> expected = {(float)(inputs[0] != inputs[1])};
-
-        auto output_layer = nn.forward(inputs);
-        auto loss = nn.compute_loss(output_layer, expected);
-
-        if (i % 1000 == 0)
-            printf("Iteration: %d, Loss: %f\n", i, loss);
-
-        nn.backpropagate(inputs, expected);
-    }
-#endif
     return 0;
 }
